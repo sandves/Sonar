@@ -10,11 +10,13 @@
  * sensor.
  */
 
+// Function prototypes
+static void init_HC_SR04();
+static void init_gpio();
 static void init_trigger_timer();
 static void init_echo_timer();
 static void init_read_timer();
-static void init_HC_SR04();
-static void init_gpio();
+static void toggleInternalLEDs();
 static void delay(uint32_t time);
 
 uint32_t delay_time = 100;
@@ -27,6 +29,8 @@ int main(void)
 	SysTick_Config(SystemCoreClock / 1000);
 
 	init_HC_SR04();
+
+	toggleInternalLEDs();
 
 	while(1)
 	{
@@ -189,15 +193,24 @@ static void init_read_timer()
 void TIM2_IRQHandler(void) {
 
 	if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET) {
-		printf("TIM2 interrupt\r\n");
-		printf("SR04: %u %u\r\n", TIM_GetCapture1(TIM1), TIM_GetCapture2(TIM1));
-
-		GPIO_WriteBit(GPIOC, GPIO_Pin_8, led_state ? Bit_RESET : Bit_SET);
-		GPIO_WriteBit(GPIOC, GPIO_Pin_9, led_state ? Bit_RESET : Bit_SET);
-		led_state = !led_state;
+		//printf("TIM2 interrupt\r\n");
+		//printf("SR04: %u %u\r\n", TIM_GetCapture1(TIM1), TIM_GetCapture2(TIM1));
+		uint16_t ch1 = TIM_GetCapture1(TIM1);
+		uint16_t ch2 = TIM_GetCapture2(TIM1);
+		if(ch1 != 0 || ch2 != 0)
+		{
+			toggleInternalLEDs();
+		}
 
 		TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
 	}
+}
+
+static void toggleInternalLEDs()
+{
+	GPIO_WriteBit(GPIOC, GPIO_Pin_8, led_state ? Bit_RESET : Bit_SET);
+	GPIO_WriteBit(GPIOC, GPIO_Pin_9, led_state ? Bit_RESET : Bit_SET);
+	led_state = !led_state;
 }
 
 /**
