@@ -5,6 +5,11 @@
 #include <stm32f10x.h>
 #include <misc.h>
 
+/**
+ * Application that interacts with the HC_SR04 ultrasonic
+ * sensor.
+ */
+
 static void init_trigger_timer();
 static void init_echo_timer();
 static void init_read_timer();
@@ -18,7 +23,9 @@ static __IO uint32_t TimingDelay;
 
 int main(void)
 {
+	// Tick every ms
 	SysTick_Config(SystemCoreClock / 1000);
+
 	init_HC_SR04();
 
 	while(1)
@@ -28,12 +35,47 @@ int main(void)
 
 static void init_HC_SR04()
 {
+	init_gpio();
 	init_trigger_timer();
 	init_echo_timer();
 	init_read_timer();
-	init_gpio();
 }
 
+/**
+ * Configure GPIO pins
+ */
+static void init_gpio()
+{
+	// PB6 -----> TIM4_CH1
+	// PA8 -----> TIM1_CH1
+
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOA
+			| RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO, ENABLE);
+
+	GPIO_InitTypeDef GPIO_InitTypeStructure;
+
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_6;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOB, &GPIO_InitTypeStructure);
+
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
+
+	//Internal LEDs
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8 | GPIO_Pin_9;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_2MHz;
+	GPIO_Init(GPIOC, &GPIO_InitTypeStructure);
+
+}
+
+/**
+ * Configure TIM4 to generate a 10us pulse at a 10Hz rate
+ * to trigger the ultrasonic sensor.
+ */
 static void init_trigger_timer()
 {
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
@@ -62,6 +104,12 @@ static void init_trigger_timer()
 	TIM_Cmd(TIM4, ENABLE);
 }
 
+/**
+ * Configuration of TIM1.
+ * - Configure channel 1 to latch timer on a rising input on t1
+ * - Configure channel 2 to latch timer on a falling input on t2
+ * - Configure TIM1 in slave mode to reset on the capture 1 event
+ */
 static void init_echo_timer()
 {
 	RCC_APB1PeriphClockCmd(RCC_APB2Periph_TIM1, ENABLE);
@@ -69,14 +117,13 @@ static void init_echo_timer()
 	TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
 	TIM_ICInitTypeDef TIM_ICInitStructure;
 
-	// Configure TIM1 prescaler and period
 	TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
-	TIM_TimeBaseStructure.TIM_Prescaler = 24000 - 1; // 0..479
-	TIM_TimeBaseStructure.TIM_Period = 150 - 1; // 0..999
+	TIM_TimeBaseStructure.TIM_Prescaler = 24000 - 1;
+	// Slightly longer period than the trigger signal
+	TIM_TimeBaseStructure.TIM_Period = 150 - 1;
 	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 	TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
 
-	// Configure channel 1 to latch the timer on a rising input on t1.
 	TIM_ICInitStructure.TIM_Channel = TIM_Channel_1;
 	TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Rising;
 	TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
@@ -84,8 +131,6 @@ static void init_echo_timer()
 	TIM_ICInitStructure.TIM_ICFilter = 0;
 	TIM_ICInit(TIM1, &TIM_ICInitStructure);
 
-	// Cofigure channel 2 to latch the timer on a falling input on t2.
-	//TIM_ICInitStructure.TIM_Channel = TIM_Channel_1;
 	TIM_ICInitStructure.TIM_Channel = TIM_Channel_2;
 	TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Falling;
 	TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_IndirectTI;
@@ -93,15 +138,18 @@ static void init_echo_timer()
 	TIM_ICInitStructure.TIM_ICFilter = 0;
 	TIM_ICInit(TIM1, &TIM_ICInitStructure);
 
-	// Cofigure TIM1 in slave mode to reset on the capture 1 event.
 	TIM_SelectInputTrigger(TIM1, TIM_TS_TI1FP1);
 	TIM_SelectSlaveMode(TIM1, TIM_SlaveMode_Reset);
 	TIM_SelectMasterSlaveMode(TIM1, TIM_MasterSlaveMode_Enable);
 
-	/* enable counter TIM1 */
 	TIM_Cmd(TIM1, ENABLE);
 }
 
+/**
+ * Configure TIM2 to generate an interrupt every second
+ * so that we can read the distance measured by the ultrasonic
+ * sensor.
+ */
 static void init_read_timer()
 {
 
@@ -111,7 +159,6 @@ static void init_read_timer()
 	TIM_OCInitTypeDef         TIM_OCInitStructure;
 	NVIC_InitTypeDef          NVIC_InitStructure;
 
-	/* TIM2 clock enable */
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
 
 	TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
@@ -135,35 +182,12 @@ static void init_read_timer()
 
 }
 
-static void init_gpio()
-{
-
-	// PB6 -----> TIM4_CH1
-	// PA8 -----> TIM1_CH1
-
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO, ENABLE);
-
-	GPIO_InitTypeDef GPIO_InitTypeStructure;
-
-	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_6;
-	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOB, &GPIO_InitTypeStructure);
-
-	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8;
-	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
-
-	//Internal LEDs
-	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8 | GPIO_Pin_9;
-	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_2MHz;
-	GPIO_Init(GPIOC, &GPIO_InitTypeStructure);
-
-}
-
+/**
+ * Print the values captured by channel 1 and 2 on TIM1.
+ * Toggle the chips internal LEDs for debugging purposes.
+ */
 void TIM2_IRQHandler(void) {
+
 	if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET) {
 		printf("TIM2 interrupt\r\n");
 		printf("SR04: %u %u\r\n", TIM_GetCapture1(TIM1), TIM_GetCapture2(TIM1));
@@ -176,6 +200,9 @@ void TIM2_IRQHandler(void) {
 	}
 }
 
+/**
+ * Sleep for a given amount of milliseconds
+ */
 static void delay(uint32_t time)
 {
 	TimingDelay = time;
