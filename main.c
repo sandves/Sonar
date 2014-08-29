@@ -38,23 +38,23 @@ static void init_trigger_timer()
 {
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
 
-	TIM_TimeBaseInitTypeDef timTbItd;
+	TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
 
-	timTbItd.TIM_Period = 100 - 1;
-	timTbItd.TIM_Prescaler = (uint16_t) 24000 - 1;
-	timTbItd.TIM_ClockDivision = TIM_CKD_DIV1;
-	timTbItd.TIM_CounterMode = TIM_CounterMode_Up;
+	TIM_TimeBaseInitStructure.TIM_Period = 100 - 1;
+	TIM_TimeBaseInitStructure.TIM_Prescaler = (uint16_t) 24000 - 1;
+	TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+	TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up;
 
-	TIM_TimeBaseInit(TIM4, &timTbItd);
+	TIM_TimeBaseInit(TIM4, &TIM_TimeBaseInitStructure);
 
-	TIM_OCInitTypeDef timOcItd;
+	TIM_OCInitTypeDef TIM_OCInitStructure;
 
-	timOcItd.TIM_OCMode = TIM_OCMode_PWM1;
-	timOcItd.TIM_OutputState = TIM_OutputState_Enable;
-	timOcItd.TIM_Pulse = 10;
-	timOcItd.TIM_OCPolarity = TIM_OCPolarity_High;
+	TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+	TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+	TIM_OCInitStructure.TIM_Pulse = 10;
+	TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
 
-	TIM_OC1Init(TIM4, &timOcItd);
+	TIM_OC1Init(TIM4, &TIM_OCInitStructure);
 	TIM_OC1PreloadConfig(TIM4, TIM_OCPreload_Enable);
 
 	TIM_ARRPreloadConfig(TIM4, ENABLE);
@@ -117,17 +117,14 @@ static void init_read_timer()
 	TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
 	TIM_OCStructInit(&TIM_OCInitStructure);
 
-	/*Compute the prescaler value */
 	PrescalerValue = (uint16_t) (SystemCoreClock / 1000) - 1;
 
-	/* Time base configuration */
-	TIM_TimeBaseStructure.TIM_Period = 1000;      //in mSecs
+	TIM_TimeBaseStructure.TIM_Period = 1000;
 	TIM_TimeBaseStructure.TIM_Prescaler = PrescalerValue;
 	TIM_TimeBaseStructure.TIM_ClockDivision = 0;
 	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
 
-	/* Enable the TIM2 gloabal Interrupt */
 	NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;
 	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
@@ -146,23 +143,23 @@ static void init_gpio()
 
 	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO, ENABLE);
 
-	GPIO_InitTypeDef itd;
+	GPIO_InitTypeDef GPIO_InitTypeStructure;
 
-	itd.GPIO_Pin = GPIO_Pin_6;
-	itd.GPIO_Mode = GPIO_Mode_AF_PP;
-	itd.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOB, &itd);
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_6;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOB, &GPIO_InitTypeStructure);
 
-	itd.GPIO_Pin = GPIO_Pin_8;
-	itd.GPIO_Mode = GPIO_Mode_AF_PP;
-	itd.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOA, &itd);
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
 
 	//Internal LEDs
-	itd.GPIO_Pin = GPIO_Pin_8 | GPIO_Pin_9;
-	itd.GPIO_Mode = GPIO_Mode_Out_PP;
-	itd.GPIO_Speed = GPIO_Speed_2MHz;
-	GPIO_Init(GPIOC, &itd);
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8 | GPIO_Pin_9;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_2MHz;
+	GPIO_Init(GPIOC, &GPIO_InitTypeStructure);
 
 }
 
