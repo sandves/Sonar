@@ -5,6 +5,7 @@
 #include <stm32f10x.h>
 #include <misc.h>
 #include <stm32f10x_usart.h>
+#include "servo_control.h"
 
 /**
  * Application that interacts with the HC-SR04 ultrasonic
@@ -20,16 +21,16 @@
 int led_state = 0;
 static __IO uint32_t TimingDelay;
 static int TxPrimed = 0;
-uint8_t distance[4] = {START_BYTE, 0, 0, STOP_BYTE};
+uint8_t distance_and_angle[5] = {START_BYTE, 0, 0, 0, STOP_BYTE};
 
 // Function prototypes
 static void init_HC_SR04();
 static void init_gpio();
 static void init_usart();
-static void sendchar(uint16_t);
+static void send_data(uint16_t);
 static void toggleInternalLEDs();
 static void delay(uint32_t time);
-static void TIM2_Init();
+static void init_timer2();
 static uint16_t HC_SR04_read();
 
 int main(void)
@@ -42,7 +43,8 @@ int main(void)
 
 	while(1)
 	{
-		sendchar(HC_SR04_read());
+		send_data(HC_SR04_read());
+		toggle_servo();
 		delay(1000);
 	}
 }
@@ -50,7 +52,8 @@ int main(void)
 static void init_HC_SR04()
 {
 	init_gpio();
-	TIM2_Init();
+	init_timer2();
+	servo_control_init();
 	init_usart();
 }
 
@@ -99,7 +102,7 @@ static void init_gpio()
 	GPIO_ResetBits(GPIOC, GPIO_Pin_6);
 }
 
-static void TIM2_Init(void) {
+static void init_timer2(void) {
 
 	TIM_TimeBaseInitTypeDef   TIM_TimeBaseStructure;
 	TIM_OCInitTypeDef         TIM_OCInitStructure;
@@ -177,9 +180,9 @@ void USART1_IRQHandler(void)
 
 	if(USART_GetITStatus(USART1, USART_IT_TXE) != RESET)
 	{
-		USART_SendData(USART1, distance[tx_index++]);
+		USART_SendData(USART1, distance_and_angle[tx_index++]);
 
-		if (tx_index >= (sizeof(distance)))
+		if (tx_index >= (sizeof(distance_and_angle)))
 		{
 			tx_index = 0;
 			USART_ITConfig(USART1, USART_IT_TXE, DISABLE);
@@ -193,12 +196,14 @@ void USART1_IRQHandler(void)
  * side by reversing this operation:
  * --> uint16_t value = low | high << 8;
  */
-static void sendchar(uint16_t d)
+static void send_data(uint16_t d)
 {
 	// The lower 8 bits
-	distance[1] = d & 0xFF;
+	distance_and_angle[1] = d & 0xFF;
 	// The higher 8 bits
-	distance[2] = d >> 8;
+	distance_and_angle[2] = d >> 8;
+
+	distance_and_angle[3] = get_servo_pos();
 
 	USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
 }
