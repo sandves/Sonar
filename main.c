@@ -9,7 +9,8 @@
 
 /**
  * Application that interacts with the HC-SR04 ultrasonic
- * sensor.
+ * sensor and transmits the measured distance over USART1
+ * once per second.
  */
 
 #define CARRIAGE_RETURN		13
@@ -232,9 +233,6 @@ static void init_usart()
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
 	NVIC_Init(&NVIC_InitStructure);
 
-	//USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
-	//USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
-
 	USART_Cmd(USART1, ENABLE);
 }
 
@@ -246,7 +244,7 @@ void USART1_IRQHandler(void)
 	static int rx_index = 0;
 	static int done = 0;
 
-	if (USART_GetITStatus(USART1, USART_IT_TXE) != RESET) // Transmit the string in a loop
+	if (USART_GetITStatus(USART1, USART_IT_TXE) != RESET)
 	{
 		if(!done)
 		{
@@ -266,14 +264,6 @@ void USART1_IRQHandler(void)
 			USART_SendData(USART1, CARRIAGE_RETURN);
 			USART_ITConfig(USART1, USART_IT_TXE, DISABLE);
 		}
-	}
-
-	if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET) // Received characters modify string
-	{
-		Message[rx_index++] = USART_ReceiveData(USART1);
-
-		if (rx_index >= (sizeof(Message) - 1))
-			rx_index = 0;
 	}
 }
 
@@ -296,14 +286,6 @@ static void sendchar(uint16_t c)
 {
 	distance = c;
 	USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
-
-	/*while (!Enqueue(&UART1_TXq, c))
-	{
-		if (!TxPrimed) {
-			TxPrimed = 1;
-			USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
-		}
-	}*/
 }
 
 static void toggleInternalLEDs()
