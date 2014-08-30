@@ -5,36 +5,32 @@
 #include <stm32f10x.h>
 #include <misc.h>
 #include <stm32f10x_usart.h>
-#include "queue.h"
 
 /**
  * Application that interacts with the HC-SR04 ultrasonic
- * sensor and transmits the measured distance over USART1
- * once per second.
+ * sensor and transmits the measured pulse width over USART1
+ * once per second. The distance needs to be processed on the
+ * client side.
  */
 
-#define CARRIAGE_RETURN		13
-#define ASCII_DIGIT_BASE	48
+#define START_BYTE			0xFA
+#define STOP_BYTE			0XFB
 
 // Members
-uint32_t delay_time = 100;
 int led_state = 0;
 static __IO uint32_t TimingDelay;
-Queue UART1_TXq;
 static int TxPrimed = 0;
-volatile char Message[] = "Pulse width of channel 1 = ";
-uint16_t distance = 0;
+uint8_t distance[4] = {START_BYTE, 0, 0, STOP_BYTE};
 
 // Function prototypes
 static void init_HC_SR04();
 static void init_gpio();
-static void init_trigger_timer();
-static void init_echo_timer();
-static void init_read_timer();
 static void init_usart();
 static void sendchar(uint16_t);
 static void toggleInternalLEDs();
 static void delay(uint32_t time);
+static void TIM2_Init();
+static uint16_t HC_SR04_read();
 
 int main(void)
 {
@@ -42,18 +38,19 @@ int main(void)
 	SysTick_Config(SystemCoreClock / 1000);
 
 	init_HC_SR04();
+	delay(1000);
 
 	while(1)
 	{
+		sendchar(HC_SR04_read());
+		delay(1000);
 	}
 }
 
 static void init_HC_SR04()
 {
 	init_gpio();
-	init_trigger_timer();
-	init_echo_timer();
-	init_read_timer();
+	TIM2_Init();
 	init_usart();
 }
 
@@ -65,22 +62,22 @@ static void init_gpio()
 	// PB6 -----> TIM4_CH1
 	// PA8 -----> TIM1_CH1
 
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOA
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA
 			| RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO, ENABLE);
 
 	GPIO_InitTypeDef GPIO_InitTypeStructure;
 
 	// Trigger pin
 	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_6;
-	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_Out_PP;
 	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOB, &GPIO_InitTypeStructure);
+	GPIO_Init(GPIOC, &GPIO_InitTypeStructure);
 
 	// Echo pin
-	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8;
-	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_7;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
 	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
+	GPIO_Init(GPIOC, &GPIO_InitTypeStructure);
 
 	// USART1_Tx
 	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_9;
@@ -99,111 +96,51 @@ static void init_gpio()
 	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_2MHz;
 	GPIO_Init(GPIOC, &GPIO_InitTypeStructure);
 
+	GPIO_ResetBits(GPIOC, GPIO_Pin_6);
 }
 
-/**
- * Configure TIM4 to generate a 10us pulse at a 10Hz rate
- * to trigger the ultrasonic sensor.
- */
-static void init_trigger_timer()
-{
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
+static void TIM2_Init(void) {
 
-	TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;
-
-	TIM_TimeBaseInitStructure.TIM_Period = 100 - 1;
-	TIM_TimeBaseInitStructure.TIM_Prescaler = (uint16_t) 24000 - 1;
-	TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;
-	TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up;
-
-	TIM_TimeBaseInit(TIM4, &TIM_TimeBaseInitStructure);
-
-	TIM_OCInitTypeDef TIM_OCInitStructure;
-
-	TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
-	TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
-	TIM_OCInitStructure.TIM_Pulse = 15;
-	TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
-
-	TIM_OC1Init(TIM4, &TIM_OCInitStructure);
-	TIM_OC1PreloadConfig(TIM4, TIM_OCPreload_Enable);
-
-	TIM_ARRPreloadConfig(TIM4, ENABLE);
-
-	TIM_Cmd(TIM4, ENABLE);
-}
-
-/**
- * Configuration of TIM1.
- * - Configure channel 1 to latch timer on a rising input on t1
- * - Configure channel 2 to latch timer on a falling input on t2
- * - Configure TIM1 in slave mode to reset on the capture 1 event
- */
-static void init_echo_timer()
-{
-	RCC_APB1PeriphClockCmd(RCC_APB2Periph_TIM1, ENABLE);
-
-	TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
-	TIM_ICInitTypeDef TIM_ICInitStructure;
-
-	TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
-	TIM_TimeBaseStructure.TIM_Prescaler = 24000 - 1;
-	// Slightly longer period than the trigger signal
-	TIM_TimeBaseStructure.TIM_Period = 150 - 1;
-	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
-	TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
-
-	TIM_ICInitStructure.TIM_Channel = TIM_Channel_1;
-	TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Rising;
-	TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
-	TIM_ICInitStructure.TIM_ICPrescaler = 0;
-	TIM_ICInitStructure.TIM_ICFilter = 0;
-	TIM_ICInit(TIM1, &TIM_ICInitStructure);
-
-	TIM_ICInitStructure.TIM_Channel = TIM_Channel_2;
-	TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Falling;
-	TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_IndirectTI;
-	TIM_ICInitStructure.TIM_ICPrescaler = 0;
-	TIM_ICInitStructure.TIM_ICFilter = 0;
-	TIM_ICInit(TIM1, &TIM_ICInitStructure);
-
-	TIM_SelectInputTrigger(TIM1, TIM_TS_TI1FP1);
-	TIM_SelectSlaveMode(TIM1, TIM_SlaveMode_Reset);
-	TIM_SelectMasterSlaveMode(TIM1, TIM_MasterSlaveMode_Enable);
-
-	TIM_Cmd(TIM1, ENABLE);
-}
-
-/**
- * Configure TIM2 to generate an interrupt every second
- * so that we can read the distance measured by the ultrasonic
- * sensor.
- */
-static void init_read_timer()
-{
 	TIM_TimeBaseInitTypeDef   TIM_TimeBaseStructure;
 	TIM_OCInitTypeDef         TIM_OCInitStructure;
-	NVIC_InitTypeDef          NVIC_InitStructure;
 
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
 
 	TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
 	TIM_OCStructInit(&TIM_OCInitStructure);
 
-	TIM_TimeBaseStructure.TIM_Period = 1000;
-	TIM_TimeBaseStructure.TIM_Prescaler = (uint16_t) (SystemCoreClock / 1000) - 1;
-	TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+	TIM_TimeBaseStructure.TIM_Period = 65535 - 1;
+	TIM_TimeBaseStructure.TIM_Prescaler = (uint16_t) (SystemCoreClock / 1000000) - 1;
+	TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
 	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
 
-	NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
-	NVIC_Init(&NVIC_InitStructure);
-
-	TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);
 	TIM_Cmd(TIM2, ENABLE);
+}
 
+/**
+ * Return the pulse width of the signal generated by the HC-SR04.
+ * This is easily converted to centimeters on the client side
+ * by multiplying the value by 0.01715 and add 0.8 (which is the offset
+ * from the drive unit to the surrounding hardware of the ultrasonic sensor).
+ */
+static uint16_t HC_SR04_read(void) {
+	toggleInternalLEDs();
+
+	TIM_SetCounter(TIM2, 0);
+
+	// Send a 15us pulse to the HC-SR04
+	GPIO_SetBits(GPIOC, GPIO_Pin_6);
+	while(TIM_GetCounter(TIM2) < 15);
+	GPIO_ResetBits(GPIOC, GPIO_Pin_6);
+
+	// Read the pulse width returned by the HC-SR04
+	while(!GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_7));
+	TIM_SetCounter(TIM2, 0);
+	while(GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_7));
+
+	// Pulse width of signal
+	return TIM_GetCounter(TIM2);
 }
 
 static void init_usart()
@@ -236,53 +173,33 @@ static void init_usart()
 
 void USART1_IRQHandler(void)
 {
-	toggleInternalLEDs();
-
 	static int tx_index = 0;
-	static int rx_index = 0;
-	static int done = 0;
 
-	if (USART_GetITStatus(USART1, USART_IT_TXE) != RESET)
+	if(USART_GetITStatus(USART1, USART_IT_TXE) != RESET)
 	{
-		if(!done)
-		{
-			USART_SendData(USART1, Message[tx_index++]);
+		USART_SendData(USART1, distance[tx_index++]);
 
-			if (tx_index >= (sizeof(Message)))
-			{
-				tx_index = 0;
-
-				USART_SendData(USART1, (distance + ASCII_DIGIT_BASE));
-				done = 1;
-			}
-		}
-		else
+		if (tx_index >= (sizeof(distance)))
 		{
-			done = !done;
-			USART_SendData(USART1, CARRIAGE_RETURN);
+			tx_index = 0;
 			USART_ITConfig(USART1, USART_IT_TXE, DISABLE);
 		}
 	}
 }
 
 /**
- * Print the values captured by channel 1 and 2 on TIM1.
- * Toggle the chips internal LEDs for debugging purposes.
+ * Split the the uint16_t in two before sending.
+ * They will need to be put together on the client
+ * side by reversing this operation:
+ * --> uint16_t value = low | high << 8;
  */
-void TIM2_IRQHandler(void) {
-
-	if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET) {
-		uint16_t ch1 = TIM_GetCapture1(TIM1);
-		uint16_t ch2 = TIM_GetCapture2(TIM1);
-		sendchar((ch1));
-
-		TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
-	}
-}
-
-static void sendchar(uint16_t c)
+static void sendchar(uint16_t d)
 {
-	distance = c;
+	// The lower 8 bits
+	distance[1] = d & 0xFF;
+	// The higher 8 bits
+	distance[2] = d >> 8;
+
 	USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
 }
 
