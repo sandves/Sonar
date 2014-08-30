@@ -4,11 +4,25 @@
 #include <stm32f10x_tim.h>
 #include <stm32f10x.h>
 #include <misc.h>
+#include <stm32f10x_usart.h>
+#include "queue.h"
 
 /**
- * Application that interacts with the HC_SR04 ultrasonic
+ * Application that interacts with the HC-SR04 ultrasonic
  * sensor.
  */
+
+#define CARRIAGE_RETURN		13
+#define ASCII_DIGIT_BASE	48
+
+// Members
+uint32_t delay_time = 100;
+int led_state = 0;
+static __IO uint32_t TimingDelay;
+Queue UART1_TXq;
+static int TxPrimed = 0;
+volatile char Message[] = "Pulse width of channel 1 = ";
+uint16_t distance = 0;
 
 // Function prototypes
 static void init_HC_SR04();
@@ -16,12 +30,10 @@ static void init_gpio();
 static void init_trigger_timer();
 static void init_echo_timer();
 static void init_read_timer();
+static void init_usart();
+static void sendchar(uint16_t);
 static void toggleInternalLEDs();
 static void delay(uint32_t time);
-
-uint32_t delay_time = 100;
-int led_state = 0;
-static __IO uint32_t TimingDelay;
 
 int main(void)
 {
@@ -43,6 +55,7 @@ static void init_HC_SR04()
 	init_trigger_timer();
 	init_echo_timer();
 	init_read_timer();
+	init_usart();
 }
 
 /**
@@ -58,14 +71,27 @@ static void init_gpio()
 
 	GPIO_InitTypeDef GPIO_InitTypeStructure;
 
+	// Trigger pin
 	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_6;
 	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
 	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_Init(GPIOB, &GPIO_InitTypeStructure);
 
+	// Echo pin
 	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_8;
 	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
 	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
+
+	// USART1_Tx
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_9;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitTypeStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
+
+	// USART1_Rx
+	GPIO_InitTypeStructure.GPIO_Pin = GPIO_Pin_10;
+	GPIO_InitTypeStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
 	GPIO_Init(GPIOA, &GPIO_InitTypeStructure);
 
 	//Internal LEDs
@@ -156,9 +182,6 @@ static void init_echo_timer()
  */
 static void init_read_timer()
 {
-
-	uint16_t PrescalerValue = 0;
-
 	TIM_TimeBaseInitTypeDef   TIM_TimeBaseStructure;
 	TIM_OCInitTypeDef         TIM_OCInitStructure;
 	NVIC_InitTypeDef          NVIC_InitStructure;
@@ -168,10 +191,8 @@ static void init_read_timer()
 	TIM_TimeBaseStructInit(&TIM_TimeBaseStructure);
 	TIM_OCStructInit(&TIM_OCInitStructure);
 
-	PrescalerValue = (uint16_t) (SystemCoreClock / 1000) - 1;
-
 	TIM_TimeBaseStructure.TIM_Period = 1000;
-	TIM_TimeBaseStructure.TIM_Prescaler = PrescalerValue;
+	TIM_TimeBaseStructure.TIM_Prescaler = (uint16_t) (SystemCoreClock / 1000) - 1;
 	TIM_TimeBaseStructure.TIM_ClockDivision = 0;
 	TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
@@ -186,6 +207,76 @@ static void init_read_timer()
 
 }
 
+static void init_usart()
+{
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
+
+	USART_InitTypeDef USART_InitStructure;
+	// Initialize USART structure
+	USART_StructInit(&USART_InitStructure);
+
+	USART_InitStructure.USART_BaudRate = 9600;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+	USART_InitStructure.USART_Parity = USART_Parity_No;
+	USART_InitStructure.USART_Mode = USART_Mode_Tx;
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+
+	USART_Init(USART1, &USART_InitStructure);
+
+	NVIC_InitTypeDef NVIC_InitStructure;
+
+	/* Enable the USART1 Interrupt */
+	NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_Init(&NVIC_InitStructure);
+
+	//USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
+	//USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
+
+	USART_Cmd(USART1, ENABLE);
+}
+
+void USART1_IRQHandler(void)
+{
+	toggleInternalLEDs();
+
+	static int tx_index = 0;
+	static int rx_index = 0;
+	static int done = 0;
+
+	if (USART_GetITStatus(USART1, USART_IT_TXE) != RESET) // Transmit the string in a loop
+	{
+		if(!done)
+		{
+			USART_SendData(USART1, Message[tx_index++]);
+
+			if (tx_index >= (sizeof(Message)))
+			{
+				tx_index = 0;
+
+				USART_SendData(USART1, (distance + ASCII_DIGIT_BASE));
+				done = 1;
+			}
+		}
+		else
+		{
+			done = !done;
+			USART_SendData(USART1, CARRIAGE_RETURN);
+			USART_ITConfig(USART1, USART_IT_TXE, DISABLE);
+		}
+	}
+
+	if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET) // Received characters modify string
+	{
+		Message[rx_index++] = USART_ReceiveData(USART1);
+
+		if (rx_index >= (sizeof(Message) - 1))
+			rx_index = 0;
+	}
+}
+
 /**
  * Print the values captured by channel 1 and 2 on TIM1.
  * Toggle the chips internal LEDs for debugging purposes.
@@ -193,17 +284,26 @@ static void init_read_timer()
 void TIM2_IRQHandler(void) {
 
 	if (TIM_GetITStatus(TIM2, TIM_IT_Update) != RESET) {
-		//printf("TIM2 interrupt\r\n");
-		//printf("SR04: %u %u\r\n", TIM_GetCapture1(TIM1), TIM_GetCapture2(TIM1));
 		uint16_t ch1 = TIM_GetCapture1(TIM1);
 		uint16_t ch2 = TIM_GetCapture2(TIM1);
-		if(ch1 != 0 || ch2 != 0)
-		{
-			toggleInternalLEDs();
-		}
+		sendchar((ch1));
 
 		TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
 	}
+}
+
+static void sendchar(uint16_t c)
+{
+	distance = c;
+	USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
+
+	/*while (!Enqueue(&UART1_TXq, c))
+	{
+		if (!TxPrimed) {
+			TxPrimed = 1;
+			USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
+		}
+	}*/
 }
 
 static void toggleInternalLEDs()
