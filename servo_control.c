@@ -134,9 +134,14 @@ void center_servo()
 	set_servo_duty_cycle(CENTER);
 }
 
-int get_servo_pos()
+int get_servo_angle()
 {
 	return duty_cycle_to_degrees(servo);
+}
+
+int get_servo_pos()
+{
+	return servo;
 }
 
 void toggle_servo()

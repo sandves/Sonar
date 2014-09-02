@@ -203,7 +203,7 @@ static void send_data(uint16_t d)
 	// The higher 8 bits
 	distance_and_angle[2] = d >> 8;
 
-	distance_and_angle[3] = get_servo_pos();
+	distance_and_angle[3] = get_servo_angle();
 
 	USART_ITConfig(USART1, USART_IT_TXE, ENABLE);
 }

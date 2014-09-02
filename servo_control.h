@@ -25,5 +25,6 @@ bool set_servo_pos(int degrees); // 0 - 180 degrees
 void center_servo();
 int get_servo_pos();
 void toggle_servo();
+int get_servo_angle();
 
 #endif
